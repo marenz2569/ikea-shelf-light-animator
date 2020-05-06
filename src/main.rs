@@ -64,6 +64,24 @@ macro_rules! RGB {
     }
 }
 
+macro_rules! linear_combination_at_grid_position {
+    ($offset:expr, $color_mode:expr, $grid:expr, $x:expr, $y:expr) => {
+        let buffer_offset = ($offset - $offset % 85) / 85;
+        let wheel_offset = $offset % 85;
+
+        // get the linear combination of the color at offsets offset%arrayCount and (offset + 1)%arrayCount
+        let a = colors[unsafe { $color_mode }][(buffer_offset%3) as usize];
+        let b = colors[unsafe { $color_mode }][((buffer_offset+1)%3) as usize];
+        
+        $grid.get_child_at($x, $y).unwrap()
+            .override_background_color(gtk::StateFlags::NORMAL,
+                                       Some(&gdk::RGBA { red: mix_color!(a.red, b.red, wheel_offset),
+                                                         green: mix_color!(a.green, b.green, wheel_offset),
+                                                         blue: mix_color!(a.blue, b.blue, wheel_offset),
+                                                         alpha: 1.0 }));
+    }
+}
+
 static mut mode: u32 = 1;
 static mut color_mode: usize = 0;
 
@@ -115,7 +133,7 @@ static colors: [[gdk::RGBA; 3]; 9] = [
     ],
 ];
 
-fn tick(grid: &gtk::Grid) -> gtk::prelude::Continue {
+fn tick(grid: &gtk::Grid, scroll: &gtk::Grid) -> gtk::prelude::Continue {
     static mut cntr: u32 = 0;
 
     unsafe {
@@ -147,20 +165,12 @@ fn tick(grid: &gtk::Grid) -> gtk::prelude::Continue {
                 _ => { 0 }
             } as u16 + (unsafe { cntr as f64 } / WRAP_VALUE as f64 * 255.0) as u16) as u8;
 
-            let buffer_offset = (offset - offset % 85) / 85;
-            let wheel_offset = offset % 85;
-
-            // get the linear combination of the color at offsets offset%arrayCount and (offset + 1)%arrayCount
-            let a = colors[unsafe { color_mode }][(buffer_offset%3) as usize];
-            let b = colors[unsafe { color_mode }][((buffer_offset+1)%3) as usize];
-            
-            grid.get_child_at(i, j).unwrap()
-                .override_background_color(gtk::StateFlags::NORMAL,
-                                           Some(&gdk::RGBA { red: mix_color!(a.red, b.red, wheel_offset),
-                                                             green: mix_color!(a.green, b.green, wheel_offset),
-                                                             blue: mix_color!(a.blue, b.blue, wheel_offset),
-                                                             alpha: 1.0 }));
+            linear_combination_at_grid_position!(offset, color_mode, grid, i, j);
         }
+    }
+
+    for i in 0..256 {
+        linear_combination_at_grid_position!(i, color_mode, scroll, i, 0);
     }
 
     // test if the upper left thing will fade with green
@@ -198,7 +208,22 @@ fn main() {
             }
         }
 
-        win.add(&grid);
+        let scroll = gtk::Grid::new();
+
+        for i in 0..256 {
+            let color = gtk::BoxBuilder::new().build();
+            color.set_property_width_request(4);
+            color.set_property_height_request(SQUARE_SIZE);
+            color.override_background_color(gtk::StateFlags::NORMAL, Some(&gdk::RGBA::black()));
+            scroll.attach(&color, i, 0, 1, 1);
+        }
+
+        let win_grid = gtk::Grid::new();
+
+        win_grid.attach(&scroll, 0, 0, 1, 1);
+        win_grid.attach(&grid, 0, 1, 1, 1);
+
+        win.add(&win_grid);
 
         win.connect_key_press_event(
             move |_, key| {
@@ -234,7 +259,7 @@ fn main() {
         win.show_all();
 
         gtk::timeout_add((1000.0 / 60.0) as _, move || {
-            tick(&grid)
+            tick(&grid, &scroll)
         });
     });
     uiapp.run(&env::args().collect::<Vec<_>>());
